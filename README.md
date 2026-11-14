@@ -1,66 +1,78 @@
-# FastAPI + Ollama (Qwen 3.5 2B) Bridge
+# Local Service AI
 
-A lightweight, asynchronous FastAPI service and modern Web UI connecting directly to a local Ollama instance running the **`qwen3.5:2b`** model.
+A FastAPI application and web chat UI powered by a local Ollama model. Ask general questions, describe a home-service problem, or request a service booking in natural language.
 
----
+## Features
 
-## 🚀 Features
+- **General AI chat**: Answers open-ended questions using the local model and recent conversation context.
+- **Service discovery**: Analyzes service issues, recommends catalog services and nearby providers, and asks follow-up questions when needed.
+- **Booking agent demo**: Understands requests such as “Book house cleaning at 2pm, cheapest,” checks available slots, and ranks by estimated total price, speed, or rating.
+- **Safety guidance**: Detects electrical hazards and provides a safety warning.
+- **REST API**: Chat, generation, service analysis, provider discovery, and pricing endpoints.
+- **Local web UI**: Served at `http://127.0.0.1:8000/`.
 
-- **Interactive Web UI**: A ChatGPT-style chat interface with real-time token streaming, markdown formatting, syntax-highlighted code blocks with 1-click copy, and prompt templates.
-- **Real-Time Streaming**: Supports Server-Sent Events (SSE) streaming for fast token-by-token responses.
-- **REST Endpoints**: Complete endpoints for chat completions (`/api/chat`), text generation (`/api/generate`), and model discovery (`/api/models`).
-- **Interactive API Docs**: Built-in Swagger UI at `http://127.0.0.1:8000/docs`.
-- **Zero Config UI**: UI is served directly at `http://127.0.0.1:8000/` or can be opened locally as `index.html`.
+> **Booking limitation:** Service providers and availability come from a local demo catalog. The booking agent prepares a demo booking summary; it does not contact a provider or create a real-world reservation.
 
----
+## Requirements
 
-## 📋 Prerequisites
+1. Install [Ollama](https://ollama.com/) and make sure it is running.
+2. Download the configured model:
 
-1. **Ollama**: Ensure Ollama is running on your machine.
-2. **Model**: Pull the model (if not already downloaded):
-   ```bash
+   ```cmd
    ollama pull qwen3.5:2b
    ```
 
----
+3. Install the Python dependencies:
 
-## ⚡ Quick Start
+   ```cmd
+   python -m pip install -r requirements.txt
+   ```
 
-### 1. Launch the Server
+## Run
 
-Run the startup batch script:
+Start the server using:
+
 ```cmd
 start.bat
 ```
-*Or manually:*
+
+Or run it manually:
+
 ```cmd
-.\.venv\Scripts\activate
 python run.py
 ```
 
-The server starts on `http://127.0.0.1:8000`.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in a browser. The interactive chat requires the server and Ollama to be running.
 
-### 2. Open the Web UI
+## Using the assistant
 
-Open your web browser and navigate to:
-👉 **[http://127.0.0.1:8000](http://127.0.0.1:8000)**
+Type a question directly to get an AI-generated answer. To discover or book a local service, include the service and any preferences you have, such as a time or price priority. For example:
 
-You can also directly double-click `index.html` in your file explorer.
+> Book house cleaning at 2pm, cheapest option.
 
----
+The assistant checks the local catalog for a matching provider and time. If the requested slot is unavailable, it reports available alternatives rather than claiming the booking succeeded. For a demo booking, the result shows an estimated price and clearly indicates that no provider was contacted.
 
-## 🛠️ API Reference
+## API
+
+Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/` or `/ui` | Opens the interactive Web Chat UI |
-| `GET` | `/health` | Health check verifying Ollama connectivity |
-| `GET` | `/api/models` | Lists all downloaded Ollama models |
-| `POST` | `/api/chat` | Chat completion (supports both streaming and JSON response) |
-| `POST` | `/api/generate` | Direct prompt completion |
-| `GET` | `/docs` | Interactive Swagger API documentation |
+| `GET` | `/` or `/ui` | Serves the chat UI |
+| `GET` | `/health` | Checks Ollama connectivity |
+| `GET` | `/api/models` | Lists installed Ollama models |
+| `POST` | `/api/chat` | Sends a chat completion request; supports streaming |
+| `POST` | `/api/generate` | Sends a text-generation request |
+| `POST` | `/api/service-ai/analyze` | Answers general questions or analyzes a service/booking request |
+| `POST` | `/api/service-ai/follow-up` | Submits a service-analysis clarification |
+| `POST` | `/api/service-ai/recommend` | Gets service and provider recommendations |
+| `GET` | `/api/service-ai/categories` | Lists supported service categories |
+| `GET` | `/api/service-ai/catalog` | Lists catalog services; optionally filter with `?category=home_cleaning` |
+| `GET` | `/api/service-ai/providers` | Lists providers; optionally filter with `?category=home_cleaning` |
+| `GET` | `/api/service-ai/session/{session_id}` | Returns session details |
+| `GET` | `/docs` | Opens Swagger API documentation |
 
-### Example cURL Request (Chat Completion)
+### Chat request example
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/chat \
@@ -75,9 +87,9 @@ curl -X POST http://127.0.0.1:8000/api/chat \
   }'
 ```
 
----
+## Configuration
 
-## ⚙️ Configuration (`.env`)
+Set these values in a `.env` file to override the defaults:
 
 ```env
 OLLAMA_BASE_URL=http://127.0.0.1:11434
@@ -85,3 +97,13 @@ DEFAULT_MODEL=qwen3.5:2b
 HOST=127.0.0.1
 PORT=8000
 ```
+
+## Tests
+
+Run the focused routing and booking tests with:
+
+```cmd
+python -m unittest -v test_agentic_behavior
+```
+
+The end-to-end API checks in `test_service_ai.py` require the app server to be running.
