@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Local Service AI</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 400: '#2dd4bf', 500: '#14b8a6', 600: '#0d9488' },
+            dark:  { 800: '#1e293b', 850: '#172033', 900: '#0f172a', 950: '#020617' }
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    ::-webkit-scrollbar { width:6px; }
+    ::-webkit-scrollbar-track { background:rgba(15,23,42,.6); }
+    ::-webkit-scrollbar-thumb { background:rgba(100,116,139,.4); border-radius:9999px; }
+    .spin { animation: spin .9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .emergency-pulse {
+      animation: ep 2s infinite ease-in-out;
+    }
+    @keyframes ep {
+      0%,100% { box-shadow:0 0 18px rgba(239,68,68,.5); border-color:rgba(239,68,68,.9); }
+      50%      { box-shadow:0 0 4px  rgba(239,68,68,.1); border-color:rgba(239,68,68,.3); }
+    }
+    .agent-step { animation: fadeIn .3s ease forwards; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(6px); } to { opacity:1; transform:none; } }
+  </style>
+</head>
+<body class="h-full bg-dark-950 text-slate-100 flex flex-col font-sans antialiased overflow-hidden">
+
+<!-- Navbar -->
+<header class="h-16 border-b border-slate-800 bg-dark-900/90 backdrop-blur px-5 flex items-center justify-between shrink-0 z-30">
+  <div class="flex items-center gap-3">
+    <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-teal-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-teal-500/20">
+      <i data-lucide="wrench" class="w-5 h-5 text-slate-950"></i>
+    </div>
+    <div>
+      <div class="flex items-center gap-2">
+        <span class="font-bold text-base text-white">Local Service AI</span>
+        <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">Qwen 3.5 · MCP Agent</span>
+      </div>
+      <p class="text-xs text-slate-400 hidden sm:block">Ask anything or request a local service</p>
+    </div>
+  </div>
+  <div class="flex items-center gap-3">
+    <div class="hidden md:flex items-center gap-2 bg-dark-850 border border-slate-700/60 rounded-lg px-3 py-1.5 text-xs cursor-pointer" id="locationPill">
+      <i data-lucide="map-pin" class="w-3.5 h-3.5 text-teal-400"></i>
+      <span id="locationText" class="text-slate-300 font-medium">Bangalore (Central)</span>
+      <i data-lucide="crosshair" class="w-3.5 h-3.5 text-slate-400 hover:text-teal-400 ml-1" id="gpsBtn"></i>
+    </div>
+    <div class="flex items-center gap-2 bg-dark-850 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
+      <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+      <span class="hidden sm:inline font-mono">Qwen 3.5 2B</span>
+      <span class="text-[11px] text-teal-400 font-mono bg-teal-950/60 px-1.5 py-0.5 rounded border border-teal-800/40">100% GPU</span>
+    </div>
+  </div>
+</header>
+
+<!-- Chat Container -->
+<main class="flex-1 overflow-y-auto" id="chatContainer">
+  <div class="max-w-3xl mx-auto px-4 py-6 space-y-4" id="chatMessages">
+
+    <!-- Welcome bubble -->
+    <div class="flex gap-3">
+      <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-teal-500 to-cyan-400 flex items-center justify-center shrink-0">
+        <i data-lucide="bot" class="w-4 h-4 text-slate-950"></i>
+      </div>
+      <div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-xl text-sm text-slate-200 leading-relaxed">
+        <p class="font-semibold text-white mb-1">Hey! I'm your Local Service AI 👋</p>
+        <p class="text-slate-300">Ask a question, describe a service problem, or tell me what you want booked.</p>
+        <p class="text-xs text-slate-400 mt-2">For example, include the service, preferred time, and whether you want the cheapest or highest-rated option.</p>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<!-- Input Bar -->
+<form id="chatForm" class="shrink-0 border-t border-slate-800 bg-dark-900/90 px-4 py-3">
+  <div class="max-w-3xl mx-auto flex items-end gap-2">
+
+    <!-- Image Upload -->
+    <input type="file" id="imgInput" accept="image/*" class="hidden">
+    <button type="button" id="imgBtn" class="p-2 rounded-xl bg-dark-850 border border-slate-700/60 text-slate-400 hover:text-teal-400 hover:border-teal-500/40 transition shrink-0" title="Attach problem photo">
+      <i data-lucide="camera" class="w-5 h-5"></i>
+    </button>
+
+    <!-- Voice -->
+    <button type="button" id="voiceBtn" class="p-2 rounded-xl bg-dark-850 border border-slate-700/60 text-slate-400 hover:text-teal-400 hover:border-teal-500/40 transition shrink-0" title="Speak your problem">
+      <i data-lucide="mic" class="w-5 h-5" id="micIcon"></i>
+    </button>
+
+    <!-- Image preview chip -->
+    <div id="imgChip" class="hidden items-center gap-2 bg-dark-800 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs shrink-0">
+      <i data-lucide="image" class="w-3.5 h-3.5 text-teal-400"></i>
+      <span id="imgChipName" class="text-slate-300 max-w-[80px] truncate">photo.jpg</span>
+      <button type="button" id="imgRemove" class="text-slate-500 hover:text-rose-400"><i data-lucide="x" class="w-3 h-3"></i></button>
+    </div>
+
+    <!-- Text Input -->
+    <textarea
+      id="msgInput"
+      rows="1"
+      placeholder="Ask a question or describe a service or booking request…"
+      class="flex-1 bg-dark-950 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 resize-none leading-relaxed"
+      style="min-height:42px;max-height:140px;"
+    ></textarea>
+
+    <!-- Send -->
+    <button type="submit" id="sendBtn"
+      class="p-2.5 rounded-xl bg-gradient-to-r from-teal-500 to-teal-600 hover:from-teal-600 hover:to-teal-700 text-slate-950 shadow-lg shadow-teal-500/25 transition active:scale-95 shrink-0">
+      <i data-lucide="send" class="w-5 h-5"></i>
+    </button>
+  </div>
+</form>
+
+<!-- Booking Confirm Modal -->
+<div id="bookModal" class="hidden fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+  <div class="bg-dark-900 border border-slate-800 rounded-2xl max-w-sm w-full p-6 space-y-4 shadow-2xl">
+    <div class="w-12 h-12 mx-auto rounded-full bg-teal-500/10 flex items-center justify-center text-teal-400">
+      <i data-lucide="check-circle" class="w-7 h-7"></i>
+    </div>
+    <div class="text-center">
+      <h3 class="text-lg font-bold text-white">Demo Booking Prepared</h3>
+      <p class="text-xs text-slate-400 mt-1" id="bookRef">LSA-00000</p>
+    </div>
+    <div class="bg-dark-950 rounded-xl border border-slate-800 p-3 space-y-2 text-xs">
+      <div class="flex justify-between"><span class="text-slate-400">Provider</span><span class="text-white font-medium" id="bookProvider">—</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Service</span><span class="text-white font-medium" id="bookService">—</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Slot</span><span class="text-teal-400 font-medium" id="bookSlot">—</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">ETA</span><span class="text-white font-medium" id="bookEta">—</span></div>
+      <div class="flex justify-between border-t border-slate-800 pt-2 font-bold">
+        <span class="text-slate-400">Total</span>
+        <span class="text-teal-400 text-sm" id="bookTotal">—</span>
+      </div>
+    </div>
+    <button id="bookClose" class="w-full py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-sm transition">Done</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════
+let sessionId       = null;
+let selectedImg     = null;
+let userLat         = 12.9716;
+let userLon         = 77.5946;
+let conversationHistory = [];   // [{role, content}] for multi-turn context
+
+// category icon map
+const CAT_ICONS = {
+  plumbing:'🚰', electrical:'⚡', ac_repair:'❄️', appliance_repair:'🧺',
+  home_cleaning:'🧹', car_wash:'🚗', painting:'🎨', carpentry:'🪚',
+  pest_control:'🐜', other:'🔧',
+};
+const PRIORITY_ICONS = { cheapest:'💰', fastest:'⚡', top_rated:'⭐' };
+
+lucide.createIcons();
+
+// ═══════════════════════════════════════════════════════
+// DOM helpers
+// ═══════════════════════════════════════════════════════
+const chatMessages = document.getElementById('chatMessages');
+const msgInput     = document.getElementById('msgInput');
+const sendBtn      = document.getElementById('sendBtn');
+
+function scrollBottom() {
+  const c = document.getElementById('chatContainer');
+  c.scrollTop = c.scrollHeight;
+}
+
+function addBubble(html, side = 'ai') {
+  const wrap = document.createElement('div');
+  wrap.className = 'flex gap-3' + (side === 'user' ? ' justify-end' : '');
+  if (side === 'ai') {
+    wrap.innerHTML = `
+      <div class="w-8 h-8 rounded-full bg-gradient-to-tr from-teal-500 to-cyan-400 flex items-center justify-center shrink-0">
+        <i data-lucide="bot" class="w-4 h-4 text-slate-950"></i>
+      </div>
+      <div class="max-w-xl">${html}</div>`;
+  } else {
+    wrap.innerHTML = `
+      <div class="max-w-xl">${html}</div>
+      <div class="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center shrink-0 text-sm font-bold text-slate-200">U</div>`;
+  }
+  chatMessages.appendChild(wrap);
+  lucide.createIcons();
+  scrollBottom();
+  return wrap;
+}
+
+function addUserBubble(text) {
+  addBubble(`<div class="bg-teal-600 rounded-2xl rounded-tr-sm px-4 py-2.5 text-sm text-white">${escHtml(text)}</div>`, 'user');
+}
+
+function escHtml(t) {
+  return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function addTypingIndicator() {
+  const id = 'typing-' + Date.now();
+  addBubble(`
+    <div id="${id}" class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 inline-flex gap-1.5 items-center">
+      <div class="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce" style="animation-delay:0s"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce" style="animation-delay:.15s"></div>
+      <div class="w-1.5 h-1.5 rounded-full bg-teal-400 animate-bounce" style="animation-delay:.3s"></div>
+    </div>`);
+  return id;
+}
+
+function removeTyping(id) {
+  const el = document.getElementById(id);
+  if (el) el.closest('.flex')?.remove();
+}
+
+function renderChatAnswer(answer) {
+  const paragraphs = escHtml(answer).split(/\n{2,}/).map(text =>
+    `<p>${text.replace(/\n/g, '<br>')}</p>`
+  ).join('');
+  addBubble(`<div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-xl text-sm text-slate-200 leading-relaxed space-y-2">${paragraphs}</div>`);
+}
+
+// ═══════════════════════════════════════════════════════
+// SEND MESSAGE
+// ═══════════════════════════════════════════════════════
+async function sendMessage(text) {
+  if (!text.trim() && !selectedImg) return;
+  addUserBubble(text || '[Photo attached]');
+
+  // Push to conversation history for multi-turn
+  conversationHistory.push({ role: 'user', content: text });
+
+  const typId = addTypingIndicator();
+  sendBtn.disabled = true;
+
+  const payload = {
+    problem_description: text || 'Customer uploaded a problem photo.',
+    image_base64: selectedImg,
+    session_id: sessionId,
+    latitude: userLat,
+    longitude: userLon,
+    conversation_history: conversationHistory.slice(0, -1), // prior turns only
+  };
+
+  selectedImg = null;
+  document.getElementById('imgChip').classList.add('hidden');
+  document.getElementById('imgChip').classList.remove('flex');
+
+  try {
+    const resp = await fetch('/api/service-ai/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    removeTyping(typId);
+    if (!resp.ok) throw new Error(data.detail || `Request failed (${resp.status})`);
+
+    sessionId = data.session_id;
+    if (data.mode === 'chat') {
+      conversationHistory.push({ role: 'assistant', content: data.answer });
+      renderChatAnswer(data.answer);
+    } else {
+      const analysis = data.analysis;
+      conversationHistory.push({
+        role: 'assistant',
+        content: analysis.follow_up_question || analysis.problem_summary,
+      });
+
+      if (data.mode === 'agent' && data.agent_result) {
+        renderAgentResult(data.agent_result, analysis);
+      } else {
+        renderDiscoverResult(data, analysis);
+      }
+    }
+
+  } catch (err) {
+    removeTyping(typId);
+    addBubble(`<div class="bg-rose-950/50 border border-rose-700 text-rose-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm">⚠️ Error: ${escHtml(err.message)}</div>`);
+  } finally {
+    sendBtn.disabled = false;
+    scrollBottom();
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — DISCOVER MODE
+// ═══════════════════════════════════════════════════════
+function renderDiscoverResult(data, analysis) {
+  const rec = data.recommendations;
+
+  // Safety emergency banner
+  if (analysis.safety_warning) {
+    addBubble(`
+      <div class="emergency-pulse border-2 border-rose-600 bg-gradient-to-r from-rose-950/90 to-dark-900 rounded-2xl rounded-tl-sm p-4 max-w-xl space-y-3">
+        <div class="flex items-start gap-3">
+          <div class="p-2 rounded-xl bg-rose-500/20 text-rose-400 shrink-0">
+            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
+          </div>
+          <div>
+            <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-rose-500 text-white">⚠️ Emergency Safety Advisory</span>
+            <p class="text-sm text-rose-100 mt-2 leading-relaxed">${escHtml(analysis.safety_warning)}</p>
+          </div>
+        </div>
+      </div>`);
+  }
+
+  // Analysis badge
+  const catIcon = CAT_ICONS[analysis.category] || '🔧';
+  const confPct = Math.round(analysis.confidence * 100);
+  addBubble(`
+    <div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm p-4 space-y-3 max-w-xl">
+      <div class="flex items-center justify-between gap-2">
+        <div class="flex items-center gap-2">
+          <span class="text-xl">${catIcon}</span>
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-bold text-teal-400 uppercase tracking-wide">${analysis.category.replace('_',' ')}</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">${analysis.issue_type}</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-0.5">${escHtml(analysis.problem_summary)}</p>
+          </div>
+        </div>
+        <div class="text-right shrink-0">
+          <div class="w-14 bg-slate-800 h-1.5 rounded-full overflow-hidden">
+            <div class="bg-teal-500 h-full" style="width:${confPct}%"></div>
+          </div>
+          <span class="text-[11px] text-slate-500">${confPct}% confident</span>
+        </div>
+      </div>
+      ${analysis.missing_information.length ? `
+        <div class="flex flex-wrap gap-1.5 text-[11px]">
+          ${analysis.missing_information.map(m=>`<span class="px-2 py-0.5 rounded bg-amber-950/60 text-amber-400 border border-amber-800/40">Needs: ${escHtml(m)}</span>`).join('')}
+        </div>` : ''}
+    </div>`);
+
+  // Follow-up question with AI-generated dynamic chips
+  if (analysis.requires_followup && analysis.follow_up_question) {
+    renderFollowUp(analysis.follow_up_question, analysis.suggested_replies || []);
+  }
+
+  // Provider recommendations
+  if (rec && rec.recommended_providers && rec.recommended_providers.length > 0) {
+    renderProviders(rec);
+  }
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — FOLLOW-UP (dynamic chips from model)
+// ═══════════════════════════════════════════════════════
+function renderFollowUp(question, chips) {
+  const chipsHtml = chips.length
+    ? `<div class="flex flex-wrap gap-2 mt-2">${chips.map(c =>
+        `<button type="button" class="reply-chip text-xs px-3 py-1.5 rounded-lg bg-dark-850 hover:bg-teal-900 border border-slate-700 text-slate-200 hover:text-teal-200 hover:border-teal-500/50 transition">${escHtml(c)}</button>`
+      ).join('')}</div>`
+    : '';
+
+  const wrap = addBubble(`
+    <div class="bg-gradient-to-r from-teal-950/50 to-dark-900 border border-teal-700/50 rounded-2xl rounded-tl-sm p-4 max-w-xl space-y-3">
+      <div class="flex items-start gap-2">
+        <i data-lucide="help-circle" class="w-4 h-4 text-teal-400 mt-0.5 shrink-0"></i>
+        <p class="text-sm text-white font-medium">${escHtml(question)}</p>
+      </div>
+      ${chipsHtml}
+      <div class="flex gap-2 mt-1">
+        <input type="text" id="inlineFollowUpInput"
+          placeholder="Type your answer…"
+          class="flex-1 bg-dark-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-500">
+        <button id="inlineFollowUpSend"
+          class="bg-teal-600 hover:bg-teal-500 text-white font-semibold px-3 py-2 rounded-xl text-xs transition">Send</button>
+      </div>
+    </div>`);
+
+  // Wire chips
+  wrap.querySelectorAll('.reply-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.textContent.trim();
+      submitFollowUp(val);
+    });
+  });
+  // Wire inline input
+  const inp = wrap.querySelector('#inlineFollowUpInput');
+  const btn2 = wrap.querySelector('#inlineFollowUpSend');
+  btn2?.addEventListener('click', () => { if (inp.value.trim()) submitFollowUp(inp.value.trim()); });
+  inp?.addEventListener('keydown', e => { if (e.key === 'Enter' && inp.value.trim()) { e.preventDefault(); submitFollowUp(inp.value.trim()); } });
+}
+
+async function submitFollowUp(answer) {
+  addUserBubble(answer);
+  conversationHistory.push({ role: 'user', content: answer });
+
+  const typId = addTypingIndicator();
+  try {
+    const resp = await fetch('/api/service-ai/follow-up', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, clarification: answer }),
+    });
+    const data = await resp.json();
+    removeTyping(typId);
+
+    conversationHistory.push({
+      role: 'assistant',
+      content: data.analysis?.follow_up_question || data.analysis?.problem_summary || '',
+    });
+
+    if (data.mode === 'agent' && data.agent_result) {
+      renderAgentResult(data.agent_result, data.analysis);
+    } else if (data.recommendations) {
+      if (data.analysis?.requires_followup && data.analysis?.follow_up_question) {
+        renderFollowUp(data.analysis.follow_up_question, data.analysis.suggested_replies || []);
+      }
+      if (data.recommendations?.recommended_providers?.length > 0) {
+        renderProviders(data.recommendations);
+      }
+    }
+  } catch (err) {
+    removeTyping(typId);
+    addBubble(`<div class="text-xs text-rose-300 px-4 py-2">Error: ${escHtml(err.message)}</div>`);
+  }
+  scrollBottom();
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — AGENT BOOKING RESULT
+// ═══════════════════════════════════════════════════════
+function renderAgentResult(agentResult, analysis) {
+  if (!agentResult.success) {
+    addBubble(`<div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-rose-200">${escHtml(agentResult.message)}</div>`);
+    return;
+  }
+
+  const prov = agentResult.selected_provider;
+  const svc  = agentResult.service;
+  const pIcon = PRIORITY_ICONS[agentResult.priority_applied] || '⭐';
+
+  // Animated step-by-step agent execution trace
+  const stepsHtml = (agentResult.steps || []).map((s, i) => `
+    <div class="agent-step flex items-start gap-2 text-xs" style="animation-delay:${i * 80}ms">
+      <span class="text-slate-500 font-mono shrink-0">${String(i+1).padStart(2,'0')}</span>
+      <span class="text-slate-300">${s}</span>
+    </div>`).join('');
+
+  addBubble(`
+    <div class="max-w-xl space-y-3">
+
+      <!-- Agent execution trace -->
+      <div class="bg-dark-950 border border-slate-800/80 rounded-2xl rounded-tl-sm p-4 space-y-2">
+        <div class="flex items-center gap-2 pb-2 border-b border-slate-800/60">
+          <i data-lucide="cpu" class="w-4 h-4 text-teal-400"></i>
+          <span class="text-xs font-semibold text-teal-400 uppercase tracking-wider">Agent Executing…</span>
+          <span class="ml-auto text-[11px] text-slate-500">${pIcon} ${agentResult.priority_applied}</span>
+        </div>
+        <div class="space-y-1.5">${stepsHtml}</div>
+      </div>
+
+      <!-- Booking Confirmation Card -->
+      <div class="bg-gradient-to-br from-teal-950/60 to-dark-900 border border-teal-600/60 rounded-2xl p-4 space-y-3">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <span class="text-[11px] font-bold uppercase tracking-wider text-teal-400">✅ Demo Booking Prepared</span>
+            <h3 class="text-base font-bold text-white mt-0.5">${escHtml(prov.name)}</h3>
+            <div class="flex items-center gap-2 text-xs mt-1">
+              <span class="text-amber-400 font-semibold">★ ${prov.rating}</span>
+              <span class="text-slate-500">(${prov.reviews_count} reviews)</span>
+              <span class="text-slate-500">•</span>
+              <span class="text-slate-400">${prov.distance_km} km away</span>
+            </div>
+          </div>
+          <div class="shrink-0 text-right">
+            <div class="text-[11px] text-slate-400">Ref</div>
+            <div class="text-xs font-mono font-bold text-teal-400">${agentResult.booking_ref}</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2 bg-dark-950/60 rounded-xl p-3 border border-slate-800/50 text-xs">
+          <div><span class="text-slate-500 block">Service</span><span class="text-white font-medium">${escHtml(svc.name)}</span></div>
+          <div><span class="text-slate-500 block">Slot</span><span class="text-teal-400 font-semibold">${escHtml(agentResult.selected_slot)}</span></div>
+          <div><span class="text-slate-500 block">ETA</span><span class="text-white font-medium">${prov.eta_minutes} mins</span></div>
+          <div><span class="text-slate-500 block">Total</span><span class="text-teal-400 font-bold text-sm">₹${agentResult.pricing.estimated_total}</span></div>
+        </div>
+
+        <div class="text-xs text-slate-400 leading-relaxed">
+          Visit charge ₹${agentResult.pricing.visit_charge} + service ₹${agentResult.pricing.estimated_service_charge} + GST ₹${agentResult.pricing.gst}.
+          This is a local demo; no external provider has been contacted.
+        </div>
+
+        <div class="flex gap-2">
+          <button class="open-booking-modal flex-1 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-semibold text-xs transition"
+            data-ref="${agentResult.booking_ref}"
+            data-provider="${escHtml(prov.name)}"
+            data-service="${escHtml(svc.name)}"
+            data-slot="${escHtml(agentResult.selected_slot)}"
+            data-eta="${prov.eta_minutes} mins"
+            data-total="₹${agentResult.pricing.estimated_total}">
+            View Full Confirmation
+          </button>
+        </div>
+      </div>
+    </div>`);
+
+  // Wire modal button
+  chatMessages.querySelectorAll('.open-booking-modal').forEach(btn => {
+    btn.addEventListener('click', () => openBookModal(btn));
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+// RENDER — PROVIDER CARDS (discover mode)
+// ═══════════════════════════════════════════════════════
+function renderProviders(rec) {
+  const providers = rec.recommended_providers || [];
+  const primary   = rec.primary_service    || {};
+
+  const cardsHtml = providers.map(prov => `
+    <div class="bg-dark-900 hover:bg-dark-850 border border-slate-800 hover:border-teal-500/40 rounded-2xl p-4 transition space-y-3">
+      <div class="flex items-start justify-between gap-2">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-xl bg-dark-800 border border-slate-700 flex items-center justify-center font-bold text-teal-400 text-sm shrink-0">
+            ${prov.name.substring(0,2).toUpperCase()}
+          </div>
+          <div>
+            <p class="font-bold text-white text-sm">${escHtml(prov.name)}</p>
+            <div class="flex items-center gap-1.5 text-xs mt-0.5">
+              <span class="text-amber-400 font-semibold">★ ${prov.rating}</span>
+              <span class="text-slate-500">(${prov.reviews_count})</span>
+            </div>
+          </div>
+        </div>
+        <span class="text-[10px] font-semibold uppercase px-2 py-0.5 rounded border ${prov.is_emergency ? 'bg-rose-950/60 text-rose-400 border-rose-800/40' : 'bg-teal-950/60 text-teal-400 border-teal-800/40'}">
+          ${escHtml(prov.badge)}
+        </span>
+      </div>
+      <div class="grid grid-cols-2 gap-2 text-xs bg-dark-950 p-2.5 rounded-xl border border-slate-800/50">
+        <div><span class="text-slate-500 block">Distance / ETA</span><span class="text-slate-200 font-semibold">${prov.distance_km} km • ${prov.eta_minutes}m</span></div>
+        <div><span class="text-slate-500 block">Visit + Service</span><span class="text-teal-400 font-bold">₹${prov.base_visit_charge + (primary.base_price||0)}</span></div>
+      </div>
+      <div class="flex flex-wrap gap-1.5 text-[11px]">
+        ${(prov.slots_available||[]).slice(0,3).map(s => `
+          <span class="inline-block px-2 py-1 rounded-lg border border-slate-700/60 text-slate-400 bg-dark-850 text-[11px]">${escHtml(s)}</span>`).join('')}
+      </div>
+    </div>`).join('');
+
+  addBubble(`
+    <div class="max-w-xl space-y-3">
+      <p class="text-sm font-semibold text-white">Found <span class="text-teal-400">${providers.length}</span> verified providers nearby:</p>
+      ${cardsHtml}
+    </div>`);
+
+}
+
+// ═══════════════════════════════════════════════════════
+// BOOKING MODAL
+// ═══════════════════════════════════════════════════════
+function openBookModal(btn) {
+  document.getElementById('bookRef').textContent      = btn.getAttribute('data-ref') || 'LSA-00000';
+  document.getElementById('bookProvider').textContent = btn.getAttribute('data-provider') || '—';
+  document.getElementById('bookService').textContent  = btn.getAttribute('data-service')  || '—';
+  document.getElementById('bookSlot').textContent     = btn.getAttribute('data-slot')     || '—';
+  document.getElementById('bookEta').textContent      = btn.getAttribute('data-eta')      || '—';
+  document.getElementById('bookTotal').textContent    = btn.getAttribute('data-total')    || '—';
+  document.getElementById('bookModal').classList.remove('hidden');
+}
+document.getElementById('bookClose').addEventListener('click', () => {
+  document.getElementById('bookModal').classList.add('hidden');
+});
+
+// ═══════════════════════════════════════════════════════
+// FORM & INPUT HANDLERS
+// ═══════════════════════════════════════════════════════
+document.getElementById('chatForm').addEventListener('submit', async e => {
+  e.preventDefault();
+  const text = msgInput.value.trim();
+  msgInput.value = '';
+  msgInput.style.height = 'auto';
+  await sendMessage(text);
+});
+
+msgInput.addEventListener('input', () => {
+  msgInput.style.height = 'auto';
+  msgInput.style.height = Math.min(msgInput.scrollHeight, 140) + 'px';
+});
+msgInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById('chatForm').dispatchEvent(new Event('submit'));
+  }
+});
+
+// Image upload
+const imgInput = document.getElementById('imgInput');
+document.getElementById('imgBtn').addEventListener('click', () => imgInput.click());
+imgInput.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    selectedImg = ev.target.result;
+    document.getElementById('imgChipName').textContent = f.name;
+    document.getElementById('imgChip').classList.remove('hidden');
+    document.getElementById('imgChip').classList.add('flex');
+  };
+  reader.readAsDataURL(f);
+});
+document.getElementById('imgRemove').addEventListener('click', () => {
+  selectedImg = null;
+  imgInput.value = '';
+  document.getElementById('imgChip').classList.add('hidden');
+  document.getElementById('imgChip').classList.remove('flex');
+});
+
+// Voice input
+let recognition = null;
+if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recognition = new SR();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.onstart  = () => { document.getElementById('micIcon').setAttribute('data-lucide','mic-off'); lucide.createIcons(); };
+  recognition.onresult = e => { msgInput.value = (msgInput.value ? msgInput.value + ' ' : '') + e.results[0][0].transcript; };
+  recognition.onend    = () => { document.getElementById('micIcon').setAttribute('data-lucide','mic'); lucide.createIcons(); };
+}
+document.getElementById('voiceBtn').addEventListener('click', () => {
+  if (recognition) { try { recognition.start(); } catch { recognition.stop(); } }
+});
+
+// GPS
+document.getElementById('gpsBtn')?.addEventListener('click', () => {
+  navigator.geolocation?.getCurrentPosition(pos => {
+    userLat = pos.coords.latitude;
+    userLon = pos.coords.longitude;
+    document.getElementById('locationText').textContent = `${userLat.toFixed(2)}°N`;
+  });
+});
+</script>
+</body>
+</html>

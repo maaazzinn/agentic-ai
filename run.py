@@ -1,0 +1,18 @@
+"""
+Entrypoint to run the FastAPI Ollama bridge server.
+"""
+import os
+import uvicorn
+from dotenv import load_dotenv
+
+load_dotenv()
+
+if __name__ == "__main__":
+    host = os.getenv("HOST", "127.0.0.1")
+    port = int(os.getenv("PORT", "8000"))
+    print(f"==================================================")
+    print(f" FastAPI Ollama Service (Qwen 3.5 2B)")
+    print(f" Server URL: http://{host}:{port}")
+    print(f" Swagger Docs: http://{host}:{port}/docs")
+    print(f"==================================================")
+    uvicorn.run("main:app", host=host, port=port, reload=True)
