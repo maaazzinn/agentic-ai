@@ -87,7 +87,11 @@ class ProblemAnalysis(BaseModel):
     follow_up_question: Optional[str] = None
     suggested_replies: List[str] = Field(default_factory=list)   # AI-generated chips
     safety_warning: Optional[str] = None
-    raw_thinking: Optional[str] = None
+    raw_thinking: Optional[str] = Field(default=None, exclude=True)
+
+
+class InferenceUnavailableError(RuntimeError):
+    """Raised when analysis cannot be produced and a fallback is not permitted."""
 
 
 def normalize_category(cat: str) -> str:
@@ -224,6 +228,7 @@ async def analyze_problem_with_qwen(
     ollama_base_url: str = "http://127.0.0.1:11434",
     model_name: str = "qwen3.5:2b",
     timeout: float = 60.0,
+    fallback_on_error: bool = True,
 ) -> ProblemAnalysis:
 
     user_content = user_input.strip() or "Customer uploaded a problem image."
@@ -284,9 +289,10 @@ async def analyze_problem_with_qwen(
             return enforce_safety_rules(analysis, user_input)
 
     except Exception as exc:
-        logger.warning(f"Qwen fallback: {exc}")
+        logger.warning("Model analysis failed: %s", exc)
+        if not fallback_on_error:
+            raise InferenceUnavailableError("AI analysis service is unavailable.") from exc
         fallback = rule_based_fallback(user_input)
-        fallback.raw_thinking = f"Fallback: {exc}"
         return fallback
 
 

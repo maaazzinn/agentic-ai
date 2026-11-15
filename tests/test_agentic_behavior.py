@@ -2,6 +2,8 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
+from pydantic import ValidationError
+
 from app.services.agent_booking import execute_agent_booking
 from app.services.analyzer import ProblemAnalysis, is_local_service_request
 
@@ -212,6 +214,106 @@ class GeneralAnswerEndpointTests(unittest.TestCase):
         self.assertEqual(result["recommendations"]["recommended_providers"][0]["shop_name"], "SQLite Cleaning")
         self.assertIsNone(result["recommendations"]["pricing_estimate"])
         self.assertIn("cannot be confirmed", result["service_notice"])
+
+
+class ProductionHardeningTests(unittest.TestCase):
+    def test_inference_requests_are_limited_to_configured_model(self):
+        from app.main import ChatRequest
+
+        with self.assertRaises(ValidationError):
+            ChatRequest(messages=[{"role": "user", "content": "Hello"}], model="unapproved-model")
+
+    def test_inference_options_reject_resource_overrides(self):
+        from app import main
+
+        with self.assertRaises(main.HTTPException) as error:
+            main._validated_ollama_options({"num_gpu": 99})
+
+        self.assertEqual(error.exception.status_code, 422)
+
+    def test_problem_input_rejects_invalid_or_oversized_images(self):
+        from app.main import ProblemInputRequest
+
+        with self.assertRaises(ValidationError):
+            ProblemInputRequest(problem_description="Repair this", image_base64="not-base64")
+        with self.assertRaises(ValidationError):
+            ProblemInputRequest(
+                problem_description="Repair this",
+                image_base64="A" * 7_000_001,
+            )
+
+    def test_public_inference_route_is_hidden_when_disabled(self):
+        from app import main
+
+        request = main.ChatRequest(messages=[{"role": "user", "content": "Hello"}])
+        with patch("app.main.ENABLE_PUBLIC_INFERENCE_API", False):
+            with self.assertRaises(main.HTTPException) as error:
+                asyncio.run(main.chat(request))
+
+        self.assertEqual(error.exception.status_code, 404)
+
+    def test_upstream_inference_errors_do_not_leak_response_body(self):
+        from app import main
+
+        class FakeResponse:
+            status_code = 500
+            text = "internal proxy details"
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, json):
+                return FakeResponse()
+
+        request = main.ChatRequest(messages=[{"role": "user", "content": "Hello"}])
+        with patch("app.main.ENABLE_PUBLIC_INFERENCE_API", True), patch(
+            "app.main.httpx.AsyncClient", return_value=FakeClient()
+        ):
+            with self.assertRaises(main.HTTPException) as error:
+                asyncio.run(main.chat(request))
+
+        self.assertEqual(error.exception.status_code, 502)
+        self.assertNotIn("internal proxy details", error.exception.detail)
+
+    def test_strict_analysis_mode_does_not_silently_return_rule_fallback(self):
+        from app.services import analyzer
+
+        class FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return None
+
+            async def post(self, url, json):
+                raise RuntimeError("private upstream details")
+
+        with patch("app.services.analyzer.httpx.AsyncClient", return_value=FakeClient()):
+            with self.assertRaises(analyzer.InferenceUnavailableError) as error:
+                asyncio.run(
+                    analyzer.analyze_problem_with_qwen(
+                        "My tap is leaking",
+                        fallback_on_error=False,
+                    )
+                )
+
+        self.assertNotIn("private upstream details", str(error.exception))
+
+    def test_model_internal_thinking_is_not_serialized(self):
+        from app.services.analyzer import ProblemAnalysis
+
+        analysis = ProblemAnalysis(
+            problem_summary="Need plumbing",
+            category="plumbing",
+            issue_type="leak",
+            raw_thinking="internal model reasoning",
+        )
+
+        self.assertNotIn("raw_thinking", analysis.model_dump())
 
 
 if __name__ == "__main__":

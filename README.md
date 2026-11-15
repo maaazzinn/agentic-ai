@@ -153,6 +153,12 @@ HOST=127.0.0.1
 PORT=8000
 ```
 
+### Production hardening flags
+
+Set `APP_ENV=production` when launching outside local development. In production, the app hides its interactive API docs, disables Uvicorn reload, and defaults the public inference (`/api/chat`, `/api/generate`, `/api/models`, `/api/gpu`), evaluation, and session-detail routes to disabled. Set `CORS_ORIGINS` to the exact trusted browser origins that host your frontend; it defaults to no cross-origin access in production. Do not enable development-only routes on a public deployment without adding authentication, authorization, and abuse controls.
+
+These settings are only an initial hardening layer, not a production deployment by themselves. This application still has no customer/provider authentication, durable session store, real provider booking integration, payment flow, or production database operations. It must not be presented as a real booking marketplace until those systems are implemented and verified. Keep `ENABLE_PUBLIC_INFERENCE_API`, `ENABLE_EVALUATION_ENDPOINT`, and `ENABLE_SESSION_DETAILS` unset in production unless they are protected by trusted access controls.
+
 ## Tests
 
 Run the focused routing and booking tests with:

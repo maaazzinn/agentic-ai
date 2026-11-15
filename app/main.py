@@ -2,6 +2,8 @@ import os
 import json
 import logging
 import sqlite3
+import base64
+import binascii
 from typing import List, Optional, Dict, Any
 from contextlib import asynccontextmanager
 
@@ -10,12 +12,13 @@ from fastapi import FastAPI, HTTPException, status, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import httpx
 
 # Local Service AI Services
 from .services.analyzer import (
     analyze_problem_with_qwen,
+    InferenceUnavailableError,
     ProblemAnalysis,
     is_local_service_request,
 )
@@ -35,11 +38,56 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip(
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "qwen3.5:2b")
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8000"))
-FORCE_GPU = os.getenv("FORCE_GPU", "true").lower() in ("true", "1", "yes")
+ENVIRONMENT = os.getenv("APP_ENV", "development").strip().lower()
+IS_PRODUCTION = ENVIRONMENT == "production"
+FORCE_GPU = os.getenv("FORCE_GPU", "false" if IS_PRODUCTION else "true").lower() in ("true", "1", "yes")
+DEFAULT_CORS_ORIGINS = "" if IS_PRODUCTION else "http://127.0.0.1:8000,http://localhost:8000"
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", DEFAULT_CORS_ORIGINS).split(",")
+    if origin.strip()
+]
+ENABLE_PUBLIC_INFERENCE_API = os.getenv(
+    "ENABLE_PUBLIC_INFERENCE_API", "false" if IS_PRODUCTION else "true"
+).lower() in ("true", "1", "yes")
+ENABLE_EVALUATION_ENDPOINT = os.getenv(
+    "ENABLE_EVALUATION_ENDPOINT", "false" if IS_PRODUCTION else "true"
+).lower() in ("true", "1", "yes")
+ENABLE_SESSION_DETAILS = os.getenv(
+    "ENABLE_SESSION_DETAILS", "false" if IS_PRODUCTION else "true"
+).lower() in ("true", "1", "yes")
+MAX_IMAGE_BASE64_LENGTH = 7_000_000
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("fastapi_ollama")
+
+
+def _require_enabled(flag: bool) -> None:
+    if not flag:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found.")
+
+
+def _validated_ollama_options(options: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    allowed_ranges = {
+        "top_k": (1, 100),
+        "top_p": (0, 1),
+        "repeat_penalty": (0.1, 2),
+        "num_predict": (1, 2048),
+        "num_ctx": (256, 32768),
+    }
+    validated: Dict[str, Any] = {}
+    for name, value in (options or {}).items():
+        if name not in allowed_ranges:
+            raise HTTPException(status_code=422, detail=f"Unsupported inference option: {name}.")
+        lower, upper = allowed_ranges[name]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not lower <= value <= upper:
+            raise HTTPException(status_code=422, detail=f"Invalid value for inference option: {name}.")
+        if name in {"top_k", "num_predict", "num_ctx"} and not isinstance(value, int):
+            raise HTTPException(status_code=422, detail=f"Invalid value for inference option: {name}.")
+        validated[name] = value
+    return validated
+
 
 def load_sqlite_provider_records(category: Optional[str] = None) -> List[Dict[str, Any]]:
     try:
@@ -126,15 +174,17 @@ app = FastAPI(
     ),
     version="2.0.0",
     lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
 
-# Enable CORS for external/frontend consumers
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 UI_ASSETS_DIR = os.path.join(os.path.dirname(__file__), "static", "assets")
@@ -146,23 +196,25 @@ if os.path.isdir(UI_ASSETS_DIR):
 # Pydantic Schemas - Chat & Generation
 # =====================================================================
 class Message(BaseModel):
-    role: str = Field(..., description="Role of the sender: 'system', 'user', or 'assistant'")
-    content: str = Field(..., description="Message text content")
+    role: str = Field(..., pattern="^(system|user|assistant)$", description="Role of the sender")
+    content: str = Field(..., min_length=1, max_length=8000, description="Message text content")
 
 
 class ChatRequest(BaseModel):
     messages: List[Message] = Field(
         ...,
+        min_length=1,
+        max_length=32,
         description="Conversation history",
-        example=[
+        json_schema_extra={"example": [
             {"role": "system", "content": "You are a concise, helpful AI assistant."},
             {"role": "user", "content": "What is agentic AI?"},
-        ],
+        ]},
     )
     model: Optional[str] = Field(
         default=DEFAULT_MODEL,
         description="Ollama model tag to query",
-        example=DEFAULT_MODEL,
+        json_schema_extra={"example": DEFAULT_MODEL},
     )
     stream: Optional[bool] = Field(
         default=False,
@@ -176,42 +228,106 @@ class ChatRequest(BaseModel):
     )
     options: Optional[Dict[str, Any]] = Field(
         default=None,
+        max_length=5,
         description="Additional Ollama runtime options",
     )
 
+    @field_validator("model")
+    @classmethod
+    def restrict_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value != DEFAULT_MODEL:
+            raise ValueError("Only the configured default model is available.")
+        return value
+
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(..., description="Text prompt for the model")
-    system: Optional[str] = Field(default=None, description="Optional system instruction")
+    prompt: str = Field(..., min_length=1, max_length=8000, description="Text prompt for the model")
+    system: Optional[str] = Field(default=None, max_length=4000, description="Optional system instruction")
     model: Optional[str] = Field(default=DEFAULT_MODEL, description="Ollama model tag")
     stream: Optional[bool] = Field(default=False, description="Streaming mode")
     temperature: Optional[float] = Field(default=0.7, ge=0.0, le=2.0)
-    options: Optional[Dict[str, Any]] = Field(default=None)
+    options: Optional[Dict[str, Any]] = Field(default=None, max_length=5)
+
+    @field_validator("model")
+    @classmethod
+    def restrict_model(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value != DEFAULT_MODEL:
+            raise ValueError("Only the configured default model is available.")
+        return value
 
 
 # =====================================================================
 # Pydantic Schemas - Local Service AI Modules
 # =====================================================================
 class ProblemInputRequest(BaseModel):
-    problem_description: str = Field(..., description="Natural language description of the customer issue")
-    image_base64: Optional[str] = Field(default=None, description="Optional base64 encoded photo of appliance/problem")
-    session_id: Optional[str] = Field(default=None, description="Optional session ID to track continuous turn")
+    problem_description: str = Field(..., min_length=1, max_length=4000, description="Natural language description of the customer issue")
+    image_base64: Optional[str] = Field(default=None, max_length=MAX_IMAGE_BASE64_LENGTH, description="Optional base64 encoded photo of appliance/problem")
+    session_id: Optional[str] = Field(default=None, max_length=64, description="Optional session ID to track continuous turn")
     latitude: Optional[float] = Field(default=12.9716, ge=-90, le=90, description="User GPS latitude (default: Bangalore)")
     longitude: Optional[float] = Field(default=77.5946, ge=-180, le=180, description="User GPS longitude (default: Bangalore)")
-    city: Optional[str] = Field(default="Bangalore (Central)", description="User city or neighborhood")
+    city: Optional[str] = Field(default="Bangalore (Central)", max_length=120, description="User city or neighborhood")
     # Conversation history for multi-turn context (list of {role, content} dicts)
-    conversation_history: Optional[List[Dict[str, Any]]] = Field(default=None)
+    conversation_history: Optional[List[Dict[str, Any]]] = Field(default=None, max_length=12)
+
+    @field_validator("problem_description")
+    @classmethod
+    def reject_blank_problem(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Problem description cannot be blank.")
+        return value
+
+    @field_validator("image_base64")
+    @classmethod
+    def validate_image(cls, value: Optional[str]) -> Optional[str]:
+        if not value:
+            return value
+        image_data = value
+        if value.startswith("data:"):
+            header, separator, image_data = value.partition(",")
+            if not separator or header.split(";", 1)[0].lower() not in {
+                "data:image/jpeg", "data:image/png", "data:image/webp", "data:image/gif",
+            } or ";base64" not in header.lower():
+                raise ValueError("Image must be a supported base64-encoded image.")
+        try:
+            decoded = base64.b64decode(image_data, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("Image must contain valid base64 data.") from exc
+        if not decoded or len(decoded) > 5 * 1024 * 1024:
+            raise ValueError("Image must be between 1 byte and 5 MB.")
+        return value
+
+    @field_validator("conversation_history")
+    @classmethod
+    def validate_conversation_history(
+        cls, value: Optional[List[Dict[str, Any]]]
+    ) -> Optional[List[Dict[str, Any]]]:
+        for turn in value or []:
+            if (
+                turn.get("role") not in {"user", "assistant"}
+                or not isinstance(turn.get("content"), str)
+                or not turn["content"].strip()
+                or len(turn["content"]) > 4000
+            ):
+                raise ValueError("Conversation history must contain bounded user or assistant messages.")
+        return value
 
 
 class FollowUpRequest(BaseModel):
     session_id: str = Field(..., description="Active session ID")
-    clarification: str = Field(..., description="Customer's answer to the follow-up question")
-    property_size: Optional[str] = Field(default=None, description="Optional property size (e.g. 1BHK, 2BHK)")
+    clarification: str = Field(..., min_length=1, max_length=1000, description="Customer's answer to the follow-up question")
+    property_size: Optional[str] = Field(default=None, max_length=40, description="Optional property size (e.g. 1BHK, 2BHK)")
+
+    @field_validator("clarification")
+    @classmethod
+    def reject_blank_clarification(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Clarification cannot be blank.")
+        return value
 
 
 class DirectRecommendRequest(BaseModel):
-    category: str = Field(..., description="Service category")
-    issue_type: Optional[str] = Field(default="general_repair", description="Specific issue type")
+    category: str = Field(..., min_length=1, max_length=64, description="Service category")
+    issue_type: Optional[str] = Field(default="general_repair", max_length=80, description="Specific issue type")
     latitude: Optional[float] = Field(default=12.9716, ge=-90, le=90)
     longitude: Optional[float] = Field(default=77.5946, ge=-180, le=180)
     emergency: Optional[bool] = Field(default=False)
@@ -279,10 +395,11 @@ async def check_ollama_status() -> Dict[str, Any]:
                     "gpu": gpu_info,
                 }
     except Exception as exc:
+        logger.warning("Ollama status check failed: %s", exc)
         return {
             "online": False,
-            "error": str(exc),
-            "hint": f"Ensure Ollama is running at {OLLAMA_BASE_URL}",
+            "error": "Inference service is unavailable." if IS_PRODUCTION else str(exc),
+            "hint": "Check the configured inference service." if IS_PRODUCTION else f"Ensure Ollama is running at {OLLAMA_BASE_URL}",
         }
     return {"online": False, "error": "Unexpected Ollama response"}
 
@@ -311,7 +428,7 @@ async def health_check():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "status": "unhealthy",
-                "message": f"Ollama is unreachable at {OLLAMA_BASE_URL}",
+                "message": "Inference service is unavailable." if IS_PRODUCTION else f"Ollama is unreachable at {OLLAMA_BASE_URL}",
                 "error": status_info.get("error"),
             },
         )
@@ -322,27 +439,44 @@ async def health_check():
     }
 
 
+@app.get("/health/live", summary="Liveness Check", tags=["Health"])
+async def liveness_check():
+    return {"status": "alive"}
+
+
 @app.get("/api/gpu", summary="GPU Acceleration Status", tags=["GPU"])
 async def gpu_status():
+    _require_enabled(ENABLE_PUBLIC_INFERENCE_API)
     return await get_gpu_status()
 
 
 @app.get("/api/models", summary="List Ollama Models", tags=["Models"])
 async def list_models():
+    _require_enabled(ENABLE_PUBLIC_INFERENCE_API)
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             resp = await client.get(f"{OLLAMA_BASE_URL}/api/tags")
             if resp.status_code != 200:
                 raise HTTPException(
-                    status_code=resp.status_code,
-                    detail=f"Ollama returned status {resp.status_code}: {resp.text}",
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail="Inference service returned an error.",
                 )
             return resp.json()
     except httpx.ConnectError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Cannot connect to Ollama at {OLLAMA_BASE_URL}.",
+            detail="Inference service is unavailable.",
         )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Inference service timed out.",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Inference service is unavailable.",
+        ) from exc
 
 
 # =====================================================================
@@ -400,7 +534,7 @@ async def analyze_problem(req: ProblemInputRequest):
                 if resp.status_code != 200:
                     raise HTTPException(
                         status_code=status.HTTP_502_BAD_GATEWAY,
-                        detail=f"Ollama returned status {resp.status_code}: {resp.text}",
+                        detail="Inference service returned an error.",
                     )
                 answer = resp.json().get("message", {}).get("content", "").strip()
                 if not answer:
@@ -411,7 +545,7 @@ async def analyze_problem(req: ProblemInputRequest):
         except httpx.RequestError as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Cannot connect to Ollama at {OLLAMA_BASE_URL}: {exc}",
+                detail="Inference service is unavailable.",
             ) from exc
 
         return {
@@ -422,14 +556,21 @@ async def analyze_problem(req: ProblemInputRequest):
         }
 
     # Invoke Qwen local model with structured analysis
-    analysis = await analyze_problem_with_qwen(
-        user_input=req.problem_description,
-        image_base64=req.image_base64,
-        conversation_history=req.conversation_history,
-        ollama_base_url=OLLAMA_BASE_URL,
-        model_name=DEFAULT_MODEL,
-        timeout=60.0,
-    )
+    try:
+        analysis = await analyze_problem_with_qwen(
+            user_input=req.problem_description,
+            image_base64=req.image_base64,
+            conversation_history=req.conversation_history,
+            ollama_base_url=OLLAMA_BASE_URL,
+            model_name=DEFAULT_MODEL,
+            timeout=60.0,
+            fallback_on_error=not IS_PRODUCTION,
+        )
+    except InferenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI analysis service is unavailable.",
+        ) from exc
     session.analysis = analysis
 
     # Service recommendations are sourced only from the SQLite provider directory.
@@ -478,13 +619,20 @@ async def submit_follow_up(req: FollowUpRequest):
         {"role": "user", "content": session.initial_query},
         {"role": "assistant", "content": session.analysis.follow_up_question or "Could you clarify?"},
     ]
-    refined_analysis = await analyze_problem_with_qwen(
-        user_input=req.clarification,
-        conversation_history=history,
-        ollama_base_url=OLLAMA_BASE_URL,
-        model_name=DEFAULT_MODEL,
-        timeout=60.0,
-    )
+    try:
+        refined_analysis = await analyze_problem_with_qwen(
+            user_input=req.clarification,
+            conversation_history=history,
+            ollama_base_url=OLLAMA_BASE_URL,
+            model_name=DEFAULT_MODEL,
+            timeout=60.0,
+            fallback_on_error=not IS_PRODUCTION,
+        )
+    except InferenceUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI analysis service is unavailable.",
+        ) from exc
     # Carry over original category/intent if the clarification doesn't change them
     if refined_analysis.category == "other" and session.analysis.category != "other":
         refined_analysis.category = session.analysis.category
@@ -580,6 +728,7 @@ def get_providers(category: Optional[str] = None):
 
 @app.get("/api/service-ai/session/{session_id}", summary="Get Session Details", tags=["Local Service AI"])
 async def get_session_info(session_id: str):
+    _require_enabled(ENABLE_SESSION_DETAILS)
     sess = get_session(session_id)
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -589,6 +738,7 @@ async def get_session_info(session_id: str):
 @app.post("/api/service-ai/evaluate", summary="Run Evaluation Benchmark Suite", tags=["Evaluation"])
 async def run_evaluation_benchmark():
     """Triggers the automated Qwen evaluation suite across all 5 capabilities and scenarios."""
+    _require_enabled(ENABLE_EVALUATION_ENDPOINT)
     from scripts.evaluate_qwen import run_evaluation
     report = await run_evaluation()
     return report
@@ -599,8 +749,9 @@ async def run_evaluation_benchmark():
 # =====================================================================
 @app.post("/api/chat", summary="Chat Completion with Qwen", tags=["Inference"])
 async def chat(request: ChatRequest):
+    _require_enabled(ENABLE_PUBLIC_INFERENCE_API)
     model_name = request.model or DEFAULT_MODEL
-    runtime_options = dict(request.options) if request.options else {}
+    runtime_options = _validated_ollama_options(request.options)
     if FORCE_GPU and "num_gpu" not in runtime_options:
         runtime_options["num_gpu"] = 99
     if request.temperature is not None:
@@ -630,15 +781,16 @@ async def chat(request: ChatRequest):
                         json=ollama_payload,
                     ) as resp:
                         if resp.status_code != 200:
-                            err_content = await resp.aread()
-                            yield f"data: {json.dumps({'error': err_content.decode()})}\n\n"
+                            await resp.aread()
+                            yield f"data: {json.dumps({'error': 'Inference service returned an error.'})}\n\n"
                             return
 
                         async for line in resp.aiter_lines():
                             if line:
                                 yield f"data: {line}\n\n"
             except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                logger.exception("Streaming inference request failed")
+                yield f"data: {json.dumps({'error': 'Inference service is unavailable.'})}\n\n"
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
@@ -646,7 +798,7 @@ async def chat(request: ChatRequest):
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=ollama_payload)
             if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail=f"Ollama error: {resp.text}")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Inference service returned an error.")
             data = resp.json()
             return {
                 "model": data.get("model", model_name),
@@ -656,14 +808,22 @@ async def chat(request: ChatRequest):
                 "total_duration": data.get("total_duration"),
                 "eval_count": data.get("eval_count"),
             }
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Inference service timed out.") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Inference service is unavailable.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("Inference request failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Inference service returned an invalid response.") from exc
 
 
 @app.post("/api/generate", summary="Text Completion with Qwen", tags=["Inference"])
 async def generate(request: GenerateRequest):
+    _require_enabled(ENABLE_PUBLIC_INFERENCE_API)
     model_name = request.model or DEFAULT_MODEL
-    runtime_options = dict(request.options) if request.options else {}
+    runtime_options = _validated_ollama_options(request.options)
     if FORCE_GPU and "num_gpu" not in runtime_options:
         runtime_options["num_gpu"] = 99
     if request.temperature is not None:
@@ -681,7 +841,7 @@ async def generate(request: GenerateRequest):
         async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(f"{OLLAMA_BASE_URL}/api/generate", json=ollama_payload)
             if resp.status_code != 200:
-                raise HTTPException(status_code=resp.status_code, detail=f"Ollama error: {resp.text}")
+                raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Inference service returned an error.")
             data = resp.json()
             return {
                 "model": data.get("model", model_name),
@@ -689,11 +849,18 @@ async def generate(request: GenerateRequest):
                 "response": data.get("response", ""),
                 "done": data.get("done", True),
             }
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Inference service timed out.") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Inference service is unavailable.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("Generation request failed")
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Inference service returned an invalid response.") from exc
 
 
 if __name__ == "__main__":
     import uvicorn
     print(f"Starting Local Service AI on http://{HOST}:{PORT}")
-    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=not IS_PRODUCTION)

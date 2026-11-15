@@ -18,7 +18,7 @@ class SessionState:
 
 class ServiceSession:
     def __init__(self, session_id: Optional[str] = None):
-        self.session_id: str = session_id or str(uuid.uuid4())[:8]
+        self.session_id: str = session_id or str(uuid.uuid4())
         self.created_at: float = time.time()
         self.state: str = SessionState.INITIAL_INPUT
         self.initial_query: str = ""
