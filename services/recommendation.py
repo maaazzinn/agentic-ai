@@ -1,15 +1,11 @@
 """
-Recommendation Engine for Local Service AI.
-Synthesizes problem analysis from Qwen with MCP service catalog and provider discovery tools
-to generate ranked, actionable local service recommendations.
+SQLite-backed service directory lookup for Local Service AI.
 """
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
+
 from services.analyzer import ProblemAnalysis
-from services.mcp_catalog import (
-    mcp_search_catalog,
-    mcp_find_providers,
-    mcp_get_pricing_estimate,
-)
+from services.mcp_catalog import haversine_distance_km
+from services.provider_store import list_provider_documents
 
 
 def generate_recommendations(
@@ -19,95 +15,60 @@ def generate_recommendations(
     user_clarification: Optional[str] = None,
     property_size: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Ranks suitable catalogue services and providers using MCP tools.
-    """
-    is_emergency = bool(analysis.safety_warning) or "hazard" in analysis.issue_type or "emergency" in analysis.issue_type
+    """Return only providers stored in SQLite for the requested service category."""
+    database_records = list_provider_documents(analysis.category) or []
+    providers: List[Dict[str, Any]] = []
 
-    # 1. Search MCP Catalogue
-    catalog_results = mcp_search_catalog(
-        category=analysis.category,
-        issue_type=analysis.issue_type,
-        query=analysis.problem_summary,
-    )
-    primary_service = catalog_results[0] if catalog_results else {
-        "id": "srv_general",
-        "category": analysis.category,
-        "name": f"{analysis.category.replace('_', ' ').title()} General Inspection",
-        "description": "Comprehensive diagnostic check by a verified professional.",
-        "base_price": 299,
-        "price_unit": "inspection",
-        "estimated_duration_mins": 45,
-        "warranty_days": 30,
-    }
-
-    # 2. Extract property size if mentioned in text or clarification
-    extracted_size = property_size
-    combined_text = f"{analysis.problem_summary} {user_clarification or ''}".upper()
-    for size in ["1BHK", "2BHK", "3BHK", "4BHK", "VILLA"]:
-        if size in combined_text:
-            extracted_size = size
-            break
-
-    # 3. Calculate Pricing Estimate via MCP Tool
-    pricing_estimate = mcp_get_pricing_estimate(
-        service_id=primary_service.get("id", "srv_general"),
-        property_size=extracted_size,
-    )
-
-    # 4. Find and Rank Providers via MCP Provider Discovery
-    providers = mcp_find_providers(
-        category=analysis.category,
-        user_lat=user_lat,
-        user_lon=user_lon,
-        max_radius_km=25.0,
-        emergency_only=is_emergency,
-    )
-
-    # Fallback if emergency filter returned no direct providers
-    if is_emergency and not providers:
-        providers = mcp_find_providers(
-            category=analysis.category,
-            user_lat=user_lat,
-            user_lon=user_lon,
-            max_radius_km=30.0,
-            emergency_only=False,
+    for record in database_records:
+        provider = dict(record)
+        provider["name"] = provider["shop_name"]
+        provider["category"] = provider["service_category"]
+        latitude = provider.get("latitude")
+        longitude = provider.get("longitude")
+        provider["distance_km"] = (
+            haversine_distance_km(user_lat, user_lon, latitude, longitude)
+            if latitude is not None and longitude is not None
+            else None
         )
+        if provider["distance_km"] is None or provider["distance_km"] <= 25:
+            providers.append(provider)
 
-    # 5. Composite Ranking
-    ranked_providers = []
-    for prov in providers:
-        # Score calculation:
-        # Base: rating * 15 (max ~75)
-        # Distance penalty: -2 points per km
-        # Verified bonus: +10
-        # Emergency bonus: +20 if emergency mode and is_emergency
-        score = prov.get("rating", 4.0) * 15.0
-        score -= min(30.0, prov.get("distance_km", 5.0) * 2.0)
-        if prov.get("verified"):
-            score += 10.0
-        if is_emergency and prov.get("is_emergency"):
-            score += 25.0
+    providers.sort(
+        key=lambda provider: (
+            provider["distance_km"] is None,
+            provider["distance_km"] if provider["distance_km"] is not None else float("inf"),
+            provider["shop_name"].casefold(),
+        )
+    )
 
-        prov_entry = dict(prov)
-        prov_entry["composite_score"] = round(score, 1)
-        prov_entry["estimated_cost"] = {
-            "visiting_charge": prov.get("base_visit_charge", 199),
-            "estimated_service_charge": pricing_estimate.get("estimated_service_charge", primary_service.get("base_price", 299)),
-            "currency": "INR (₹)",
+    primary_service = None
+    if providers:
+        category = providers[0]["service_category"]
+        primary_service = {
+            "category": category,
+            "name": category.replace("_", " ").title(),
+            "provider_count": len(providers),
         }
-        ranked_providers.append(prov_entry)
 
-    # Sort by composite score descending
-    ranked_providers.sort(key=lambda x: x["composite_score"], reverse=True)
+    if not providers:
+        notice = f"No {analysis.category.replace('_', ' ')} providers are listed in the SQLite database."
+    elif analysis.intent == "book":
+        notice = (
+            "The SQLite records do not include prices or available time slots, "
+            "so a booking cannot be confirmed."
+        )
+    else:
+        notice = None
 
     return {
         "analysis": analysis.model_dump(),
         "primary_service": primary_service,
-        "related_services": catalog_results[1:3] if len(catalog_results) > 1 else [],
-        "pricing_estimate": pricing_estimate,
-        "recommended_providers": ranked_providers[:4],
-        "is_emergency": is_emergency,
-        "safety_advisory": analysis.safety_warning if is_emergency else None,
+        "related_services": [],
+        "pricing_estimate": None,
+        "recommended_providers": providers,
+        "is_emergency": bool(analysis.safety_warning) or "hazard" in analysis.issue_type or "emergency" in analysis.issue_type,
+        "safety_advisory": analysis.safety_warning,
         "clarification_applied": user_clarification,
+        "notice": notice,
+        "data_source": "sqlite",
     }

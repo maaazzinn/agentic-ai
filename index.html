@@ -49,14 +49,14 @@
         <span class="font-bold text-base text-white">Local Service AI</span>
         <span class="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20">Qwen 3.5 · MCP Agent</span>
       </div>
-      <p class="text-xs text-slate-400 hidden sm:block">Ask anything or request a local service</p>
+      <p class="text-xs text-slate-400 hidden sm:block">Ask about services in the SQLite directory</p>
     </div>
   </div>
   <div class="flex items-center gap-3">
     <div class="hidden md:flex items-center gap-2 bg-dark-850 border border-slate-700/60 rounded-lg px-3 py-1.5 text-xs cursor-pointer" id="locationPill">
       <i data-lucide="map-pin" class="w-3.5 h-3.5 text-teal-400"></i>
-      <span id="locationText" class="text-slate-300 font-medium">Bangalore (Central)</span>
-      <i data-lucide="crosshair" class="w-3.5 h-3.5 text-slate-400 hover:text-teal-400 ml-1" id="gpsBtn"></i>
+      <span id="locationText" class="text-slate-300 font-medium" title="Requesting device location">Getting location…</span>
+      <i data-lucide="crosshair" class="w-3.5 h-3.5 text-slate-400 hover:text-teal-400 ml-1" id="gpsBtn" title="Refresh current location" aria-label="Refresh current location"></i>
     </div>
     <div class="flex items-center gap-2 bg-dark-850 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-slate-300">
       <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
@@ -77,8 +77,9 @@
       </div>
       <div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-xl text-sm text-slate-200 leading-relaxed">
         <p class="font-semibold text-white mb-1">Hey! I'm your Local Service AI 👋</p>
-        <p class="text-slate-300">Ask a question, describe a service problem, or tell me what you want booked.</p>
-        <p class="text-xs text-slate-400 mt-2">For example, include the service, preferred time, and whether you want the cheapest or highest-rated option.</p>
+        <p class="text-slate-300">Ask about a listed service or find providers for a service problem.</p>
+        <p class="text-xs text-slate-400 mt-2">Answers use only service categories and provider details stored in SQLite.</p>
+        <p class="text-xs text-slate-400 mt-2">Allow location access to find nearby providers. If unavailable, the app uses fallback coordinates.</p>
       </div>
     </div>
 
@@ -111,7 +112,7 @@
     <textarea
       id="msgInput"
       rows="1"
-      placeholder="Ask a question or describe a service or booking request…"
+      placeholder="Ask about a listed service or describe a service problem…"
       class="flex-1 bg-dark-950 border border-slate-700/80 rounded-xl px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-teal-500 focus:ring-2 focus:ring-teal-500/15 resize-none leading-relaxed"
       style="min-height:42px;max-height:140px;"
     ></textarea>
@@ -156,6 +157,7 @@ let sessionId       = null;
 let selectedImg     = null;
 let userLat         = 12.9716;
 let userLon         = 77.5946;
+let userLocationLabel = 'Bangalore (Central)';
 let conversationHistory = [];   // [{role, content}] for multi-turn context
 
 // category icon map
@@ -250,6 +252,7 @@ async function sendMessage(text) {
     session_id: sessionId,
     latitude: userLat,
     longitude: userLon,
+    city: userLocationLabel,
     conversation_history: conversationHistory.slice(0, -1), // prior turns only
   };
 
@@ -348,6 +351,11 @@ function renderDiscoverResult(data, analysis) {
   // Follow-up question with AI-generated dynamic chips
   if (analysis.requires_followup && analysis.follow_up_question) {
     renderFollowUp(analysis.follow_up_question, analysis.suggested_replies || []);
+  }
+
+  const serviceNotice = data.service_notice || rec?.notice;
+  if (serviceNotice) {
+    addBubble(`<div class="bg-dark-900 border border-slate-800 rounded-2xl rounded-tl-sm px-4 py-3 max-w-xl text-sm text-slate-300">${escHtml(serviceNotice)}</div>`);
   }
 
   // Provider recommendations
@@ -521,40 +529,39 @@ function renderAgentResult(agentResult, analysis) {
 // ═══════════════════════════════════════════════════════
 function renderProviders(rec) {
   const providers = rec.recommended_providers || [];
-  const primary   = rec.primary_service    || {};
 
-  const cardsHtml = providers.map(prov => `
-    <div class="bg-dark-900 hover:bg-dark-850 border border-slate-800 hover:border-teal-500/40 rounded-2xl p-4 transition space-y-3">
+  const cardsHtml = providers.map(prov => {
+    const name = prov.shop_name || prov.name || 'Provider';
+    const area = [prov.area, prov.address].filter(Boolean).join(' · ');
+    const contact = [prov.contact_name, prov.phone].filter(Boolean).join(' · ');
+    const distance = Number.isFinite(prov.distance_km)
+      ? `<p class="text-xs text-slate-400 mt-1">${prov.distance_km} km away</p>`
+      : '';
+    return `
+    <div class="bg-dark-900 border border-slate-800 rounded-2xl p-4 space-y-3">
       <div class="flex items-start justify-between gap-2">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-xl bg-dark-800 border border-slate-700 flex items-center justify-center font-bold text-teal-400 text-sm shrink-0">
-            ${prov.name.substring(0,2).toUpperCase()}
+            ${escHtml(name.substring(0,2).toUpperCase())}
           </div>
           <div>
-            <p class="font-bold text-white text-sm">${escHtml(prov.name)}</p>
-            <div class="flex items-center gap-1.5 text-xs mt-0.5">
-              <span class="text-amber-400 font-semibold">★ ${prov.rating}</span>
-              <span class="text-slate-500">(${prov.reviews_count})</span>
-            </div>
+            <p class="font-bold text-white text-sm">${escHtml(name)}</p>
+            <p class="text-xs text-slate-400 mt-0.5">${escHtml(prov.service_category || prov.category || '')}</p>
           </div>
         </div>
-        <span class="text-[10px] font-semibold uppercase px-2 py-0.5 rounded border ${prov.is_emergency ? 'bg-rose-950/60 text-rose-400 border-rose-800/40' : 'bg-teal-950/60 text-teal-400 border-teal-800/40'}">
-          ${escHtml(prov.badge)}
+        <span class="text-[10px] font-semibold uppercase px-2 py-0.5 rounded border bg-teal-950/60 text-teal-400 border-teal-800/40">
+          ${escHtml(prov.verification_status || 'status unavailable')}
         </span>
       </div>
-      <div class="grid grid-cols-2 gap-2 text-xs bg-dark-950 p-2.5 rounded-xl border border-slate-800/50">
-        <div><span class="text-slate-500 block">Distance / ETA</span><span class="text-slate-200 font-semibold">${prov.distance_km} km • ${prov.eta_minutes}m</span></div>
-        <div><span class="text-slate-500 block">Visit + Service</span><span class="text-teal-400 font-bold">₹${prov.base_visit_charge + (primary.base_price||0)}</span></div>
-      </div>
-      <div class="flex flex-wrap gap-1.5 text-[11px]">
-        ${(prov.slots_available||[]).slice(0,3).map(s => `
-          <span class="inline-block px-2 py-1 rounded-lg border border-slate-700/60 text-slate-400 bg-dark-850 text-[11px]">${escHtml(s)}</span>`).join('')}
-      </div>
-    </div>`).join('');
+      ${area ? `<p class="text-xs text-slate-300">${escHtml(area)}</p>` : ''}
+      ${contact ? `<p class="text-xs text-slate-400">${escHtml(contact)}</p>` : ''}
+      ${distance}
+    </div>`;
+  }).join('');
 
   addBubble(`
     <div class="max-w-xl space-y-3">
-      <p class="text-sm font-semibold text-white">Found <span class="text-teal-400">${providers.length}</span> verified providers nearby:</p>
+      <p class="text-sm font-semibold text-white">Found <span class="text-teal-400">${providers.length}</span> matching SQLite provider records:</p>
       ${cardsHtml}
     </div>`);
 
@@ -635,14 +642,54 @@ document.getElementById('voiceBtn').addEventListener('click', () => {
   if (recognition) { try { recognition.start(); } catch { recognition.stop(); } }
 });
 
-// GPS
-document.getElementById('gpsBtn')?.addEventListener('click', () => {
-  navigator.geolocation?.getCurrentPosition(pos => {
+// Request location once on load; the crosshair lets the user retry or refresh it.
+function requestCurrentLocation() {
+  const locationText = document.getElementById('locationText');
+  if (!navigator.geolocation) {
+    userLocationLabel = 'Bangalore (Central) · fallback location';
+    locationText.textContent = 'Using fallback location';
+    locationText.title = 'This browser does not provide geolocation. Provider search is using fallback coordinates.';
+    return;
+  }
+
+  locationText.textContent = 'Getting location…';
+  locationText.title = 'Allow location access in your browser to find nearby services.';
+  navigator.geolocation.getCurrentPosition(async pos => {
     userLat = pos.coords.latitude;
     userLon = pos.coords.longitude;
-    document.getElementById('locationText').textContent = `${userLat.toFixed(2)}°N`;
-  });
-});
+    userLocationLabel = 'Current location';
+    locationText.textContent = 'Finding place…';
+    locationText.title = 'Resolving your current place name locally.';
+    try {
+      const params = new URLSearchParams({
+        latitude: String(userLat),
+        longitude: String(userLon),
+      });
+      const response = await fetch(`/api/location/resolve?${params}`);
+      if (!response.ok) throw new Error(`Place lookup failed (${response.status}).`);
+      const place = await response.json();
+      userLocationLabel = place.place_name;
+      locationText.textContent = place.place_name;
+      locationText.title = 'Your location is resolved locally and will be used to find nearby services.';
+    } catch (error) {
+      userLocationLabel = 'Current location';
+      locationText.textContent = 'Place name unavailable';
+      locationText.title = 'Your coordinates are available for provider search, but the local place-name lookup failed.';
+    }
+  }, error => {
+    const reason = error.code === 1
+      ? 'Location permission was denied.'
+      : error.code === 3
+        ? 'Location request timed out.'
+        : 'Your current location is unavailable.';
+    userLocationLabel = 'Bangalore (Central) · fallback location';
+    locationText.textContent = 'Using fallback location';
+    locationText.title = `${reason} Provider search is using fallback coordinates.`;
+  }, { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 });
+}
+
+document.getElementById('gpsBtn')?.addEventListener('click', requestCurrentLocation);
+requestCurrentLocation();
 </script>
 </body>
 </html>

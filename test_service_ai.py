@@ -47,11 +47,15 @@ def test_all():
     recs_a = data_a["recommendations"]
     print(f"✓ Session ID: {data_a['session_id']}")
     print(f"✓ Category: {analysis_a['category']} | Issue: {analysis_a['issue_type']}")
-    print(f"✓ Primary Service: {recs_a['primary_service']['name']} (₹{recs_a['primary_service']['base_price']})")
+    primary_service = recs_a.get("primary_service")
+    if primary_service:
+        print(f"✓ SQLite Service Category: {primary_service['name']}")
+    else:
+        print("✓ No matching service category is listed in SQLite.")
     print(f"✓ Recommended Providers: {len(recs_a['recommended_providers'])}")
     if recs_a['recommended_providers']:
         top_p = recs_a['recommended_providers'][0]
-        print(f"   Top Pick: {top_p['name']} ({top_p['rating']}★, {top_p['distance_km']} km, {top_p['eta_minutes']}m ETA)")
+        print(f"   SQLite Provider: {top_p['shop_name']} ({top_p['area']}, {top_p['verification_status']})")
     print(f"✓ Latency: {dur_a}s")
 
     # 4. Analyze Scenario C (Electrical Emergency)
