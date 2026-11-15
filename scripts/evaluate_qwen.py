@@ -14,12 +14,12 @@ import asyncio
 import time
 import json
 from typing import Dict, Any, List
-from services.analyzer import (
+from app.services.analyzer import (
     analyze_problem_with_qwen,
     ProblemAnalysis,
     SUPPORTED_CATEGORIES,
 )
-from services.mcp_catalog import mcp_search_catalog, mcp_find_providers
+from app.services.mcp_catalog import mcp_search_catalog, mcp_find_providers
 
 # Evaluation Scenarios Defined by Specification
 SCENARIOS = [

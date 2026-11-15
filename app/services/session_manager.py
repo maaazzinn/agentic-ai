@@ -6,7 +6,7 @@ Tracks the multi-turn lifecycle of customer inquiries:
 import uuid
 import time
 from typing import Dict, Any, Optional
-from services.analyzer import ProblemAnalysis
+from .analyzer import ProblemAnalysis
 
 
 class SessionState:

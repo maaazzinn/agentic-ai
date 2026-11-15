@@ -9,12 +9,12 @@ When intent == "book", the agent:
 import time
 import re
 from typing import Dict, Any, Optional, List
-from services.mcp_catalog import (
+from .mcp_catalog import (
     mcp_search_catalog,
     mcp_find_providers,
     mcp_get_pricing_estimate,
 )
-from services.analyzer import ProblemAnalysis
+from .analyzer import ProblemAnalysis
 
 
 def _slot_matches_preference(slot: str, preference: str) -> bool:

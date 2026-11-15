@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from services.analyzer import ProblemAnalysis
-from services.recommendation import generate_recommendations
+from app.services.analyzer import ProblemAnalysis
+from app.services.recommendation import generate_recommendations
 
 
 class SqliteRecommendationTests(unittest.TestCase):
@@ -26,7 +26,7 @@ class SqliteRecommendationTests(unittest.TestCase):
             "source_url": "",
             "verification_status": "verified",
         }
-        with patch("services.recommendation.list_provider_documents", return_value=[provider]) as lookup:
+        with patch("app.services.recommendation.list_provider_documents", return_value=[provider]) as lookup:
             result = generate_recommendations(self.analysis)
 
         lookup.assert_called_once_with("plumbing")
@@ -36,7 +36,7 @@ class SqliteRecommendationTests(unittest.TestCase):
         self.assertNotIn("base_visit_charge", result["recommended_providers"][0])
 
     def test_missing_database_records_do_not_fall_back_to_demo_providers(self):
-        with patch("services.recommendation.list_provider_documents", return_value=None):
+        with patch("app.services.recommendation.list_provider_documents", return_value=None):
             result = generate_recommendations(self.analysis)
 
         self.assertEqual(result["recommended_providers"], [])

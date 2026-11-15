@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from pydantic import ValidationError
 
-from services.provider_store import (
+from app.services.provider_store import (
     PROVIDER_FIELDS,
     ServiceProviderRecord,
     list_provider_documents,
@@ -87,7 +87,7 @@ class ProviderRecordTests(unittest.TestCase):
             self.assertEqual(upsert_provider_records([record], database_path), 1)
             self.assertEqual(upsert_provider_records([record], database_path), 1)
 
-            with patch("services.provider_store.get_provider_database_path", return_value=database_path):
+            with patch("app.services.provider_store.get_provider_database_path", return_value=database_path):
                 records = list_provider_documents("Home Cleaning")
 
         self.assertEqual(len(records), 1)

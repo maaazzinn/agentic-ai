@@ -3,9 +3,9 @@ SQLite-backed service directory lookup for Local Service AI.
 """
 from typing import Any, Dict, List, Optional
 
-from services.analyzer import ProblemAnalysis
-from services.mcp_catalog import haversine_distance_km
-from services.provider_store import list_provider_documents
+from .analyzer import ProblemAnalysis
+from .mcp_catalog import haversine_distance_km
+from .provider_store import list_provider_documents
 
 
 def generate_recommendations(

@@ -1,6 +1,6 @@
 import unittest
 
-from services.location_resolver import resolve_place_name
+from app.services.location_resolver import resolve_place_name
 
 
 class LocationResolverTests(unittest.TestCase):

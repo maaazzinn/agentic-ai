@@ -9,6 +9,7 @@ A FastAPI application and web chat UI powered by a local Ollama model. Ask about
 - **Safety guidance**: Detects electrical hazards and provides a safety warning.
 - **REST API**: App-scoped chat, generation, service analysis, and provider discovery.
 - **Local web UI**: Served at `http://127.0.0.1:8000/`.
+- **Plain frontend**: The UI is built from `app/templates/index.html` and `app/static/assets/`; no frontend build step is needed.
 
 > **Booking limitation:** SQLite records contain provider directory details only, not prices or availability. The app lists matching providers but does not confirm bookings.
 
@@ -29,6 +30,26 @@ A FastAPI application and web chat UI powered by a local Ollama model. Ask about
 
 4. The provider directory uses SQLite. Set `PROVIDER_DATABASE_PATH` in `.env` to override the default `local_service_ai.sqlite3` database file.
 
+## Project structure
+
+```text
+app/
+  main.py
+  services/
+  static/assets/
+  templates/index.html
+scripts/
+  evaluate_qwen.py
+  import_providers.py
+  test_client.py
+tests/
+  test_*.py
+run.py
+requirements.txt
+```
+
+The FastAPI application and its service modules live in `app/`. Static UI files and the HTML template are kept with the app, while CLI utilities and tests have their own top-level folders. Runtime configuration, dependencies, and the local SQLite database remain at the project root.
+
 ## Run
 
 Start the server using:
@@ -41,6 +62,12 @@ Or run it manually:
 
 ```cmd
 python run.py
+```
+
+You can also start the app directly with:
+
+```cmd
+python -m uvicorn app.main:app --reload
 ```
 
 Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in a browser. The interactive chat requires the server and Ollama to be running.
@@ -85,7 +112,7 @@ Before a provider CSV has been imported, service and provider lookups return no 
 The CSV must include `service_category`, `shop_name`, `contact_name`, `phone`, `address`, `area`, `latitude`, `longitude`, `source_url`, and `verification_status`. Import it with:
 
 ```cmd
-python import_providers.py --csv "C:\path\to\providers.csv"
+python -m scripts.import_providers --csv "C:\path\to\providers.csv"
 ```
 
 Imports are repeatable: records are upserted using the service category, shop name, and phone. Coordinates are optional but range-validated when present; provider names and areas are required. Pass `--database "C:\path\to\providers.sqlite3"` to override the configured/default SQLite file for one import.
@@ -121,7 +148,7 @@ PORT=8000
 Run the focused routing and booking tests with:
 
 ```cmd
-python -m unittest -v test_agentic_behavior
+python -m unittest discover -s tests -v
 ```
 
-The end-to-end API checks in `test_service_ai.py` require the app server to be running.
+The end-to-end API checks in `tests/test_service_ai.py` and `scripts/test_client.py` require the app server to be running.

@@ -15,4 +15,4 @@ if __name__ == "__main__":
     print(f" Server URL: http://{host}:{port}")
     print(f" Swagger Docs: http://{host}:{port}/docs")
     print(f"==================================================")
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+    uvicorn.run("app.main:app", host=host, port=port, reload=True)

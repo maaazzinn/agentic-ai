@@ -9,23 +9,24 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import httpx
 
 # Local Service AI Services
-from services.analyzer import (
+from .services.analyzer import (
     analyze_problem_with_qwen,
     ProblemAnalysis,
     is_local_service_request,
 )
-from services.recommendation import generate_recommendations
-from services.session_manager import (
+from .services.recommendation import generate_recommendations
+from .services.session_manager import (
     get_or_create_session,
     get_session,
     SessionState,
 )
-from services.provider_store import list_provider_documents
-from services.location_resolver import resolve_place_name
+from .services.provider_store import list_provider_documents
+from .services.location_resolver import resolve_place_name
 
 # Load environment variables
 load_dotenv()
@@ -133,6 +134,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+UI_ASSETS_DIR = os.path.join(os.path.dirname(__file__), "static", "assets")
+if os.path.isdir(UI_ASSETS_DIR):
+    app.mount("/assets", StaticFiles(directory=UI_ASSETS_DIR), name="ui-assets")
 
 
 # =====================================================================
@@ -286,11 +291,14 @@ async def check_ollama_status() -> Dict[str, Any]:
 @app.get("/", summary="Local Service AI Web UI", tags=["UI"], response_class=FileResponse)
 @app.get("/ui", summary="Local Service AI Web UI", tags=["UI"], response_class=FileResponse)
 async def serve_ui():
-    """Serves the interactive Local Service AI Web UI."""
-    ui_path = os.path.join(os.path.dirname(__file__), "index.html")
-    if os.path.exists(ui_path):
-        return FileResponse(ui_path)
-    return JSONResponse({"message": "UI not found, please check index.html"}, status_code=404)
+    """Serves the Local Service AI web UI."""
+    ui_path = os.path.join(os.path.dirname(__file__), "templates", "index.html")
+    if not os.path.isfile(ui_path):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The web UI was not found in app/templates.",
+        )
+    return FileResponse(ui_path)
 
 
 @app.get("/health", summary="Health Check", tags=["Health"])
@@ -579,7 +587,7 @@ async def get_session_info(session_id: str):
 @app.post("/api/service-ai/evaluate", summary="Run Evaluation Benchmark Suite", tags=["Evaluation"])
 async def run_evaluation_benchmark():
     """Triggers the automated Qwen evaluation suite across all 5 capabilities and scenarios."""
-    from evaluate_qwen import run_evaluation
+    from scripts.evaluate_qwen import run_evaluation
     report = await run_evaluation()
     return report
 
@@ -686,4 +694,4 @@ async def generate(request: GenerateRequest):
 if __name__ == "__main__":
     import uvicorn
     print(f"Starting Local Service AI on http://{HOST}:{PORT}")
-    uvicorn.run("main:app", host=HOST, port=PORT, reload=True)
+    uvicorn.run("app.main:app", host=HOST, port=PORT, reload=True)

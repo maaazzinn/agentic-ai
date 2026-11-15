@@ -5,7 +5,7 @@ import sys
 
 from dotenv import load_dotenv
 
-from services.provider_store import parse_provider_csv, upsert_provider_records
+from app.services.provider_store import parse_provider_csv, upsert_provider_records
 
 
 def main() -> int:

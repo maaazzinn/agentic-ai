@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f3f2ed">
+    <title>Local Service AI</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    <link rel="stylesheet" href="/assets/app.css">
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <button class="drawer-scrim" data-action="close-menu" aria-label="Close navigation" hidden></button>
+      <aside class="sidebar" id="sidebar" aria-label="Conversation navigation">
+        <div class="sidebar-top">
+          <div class="brand">
+            <div class="brand-mark" data-icon="sparkles"></div>
+            <div>
+              <strong>Local Service</strong>
+              <span>AI assistant</span>
+            </div>
+          </div>
+          <button class="icon-button collapse-button" data-action="toggle-sidebar" aria-label="Toggle sidebar"></button>
+          <button class="icon-button mobile-close" data-action="close-menu" aria-label="Close navigation"></button>
+        </div>
+        <button class="new-chat" data-action="new-chat">
+          <span data-icon="plus"></span>
+          <span class="button-label">New conversation</span>
+        </button>
+        <label class="sidebar-search">
+          <span data-icon="search"></span>
+          <input id="conversationSearch" type="search" placeholder="Search conversations" aria-label="Search conversations">
+        </label>
+        <div class="conversation-section">
+          <p class="section-label">Recent conversations</p>
+          <div class="conversation-list" id="conversationList"></div>
+        </div>
+        <div class="sidebar-footer">
+          <div class="model-tile" title="Qwen 3.5 2B">
+            <span data-icon="bot"></span>
+            <div>
+              <strong>Qwen 3.5 2B</strong>
+              <span><i></i>MCP agent connected</span>
+            </div>
+          </div>
+          <button class="settings-row" title="Settings">
+            <span data-icon="settings"></span>
+            <span class="settings-label">Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="chat-shell">
+        <header class="chat-header">
+          <div class="header-start">
+            <button class="icon-button menu-button" data-action="open-menu" aria-label="Open navigation"></button>
+            <div class="header-brand">
+              <div class="header-avatar" data-icon="sparkles"></div>
+              <div>
+                <strong>Local Service AI</strong>
+                <span><i></i>Online · Qwen 3.5 2B</span>
+              </div>
+            </div>
+          </div>
+          <div class="header-actions">
+            <div class="agent-pill">
+              <span data-icon="bot"></span>
+              <span>MCP Agent</span>
+              <i></i>
+            </div>
+            <button class="location-pill" id="locationButton" data-action="refresh-location">
+              <span data-icon="map-pin"></span>
+              <span id="locationText">Set location</span>
+              <span data-icon="refresh"></span>
+            </button>
+            <button class="icon-button" aria-label="Settings"><span data-icon="more"></span></button>
+          </div>
+        </header>
+
+        <div class="chat-scroll" id="chatScroll">
+          <div class="chat-content is-empty" id="chatContent"></div>
+        </div>
+
+        <form class="composer-wrap" id="chatForm">
+          <div class="composer" id="composer">
+            <div class="image-preview" id="imagePreview" hidden>
+              <img id="imagePreviewImage" alt="Attachment preview">
+              <button type="button" data-action="remove-image" aria-label="Remove attachment"><span data-icon="x"></span></button>
+            </div>
+            <textarea id="messageInput" rows="1" placeholder="Describe your problem or ask Local Service AI anything..." aria-label="Message"></textarea>
+            <div class="composer-actions">
+              <div>
+                <label class="composer-tool" title="Attach image">
+                  <span data-icon="paperclip"></span>
+                  <input id="imageInput" type="file" accept="image/*" aria-label="Attach image">
+                </label>
+                <button class="composer-tool" id="voiceButton" type="button" data-action="voice-input" aria-label="Voice input">
+                  <span data-icon="mic"></span>
+                </button>
+              </div>
+              <button class="send-button" id="sendButton" type="submit" aria-label="Send message" disabled>
+                <span data-icon="send"></span>
+              </button>
+            </div>
+          </div>
+          <p class="composer-hint"><span>Enter</span> to send · <span>Shift + Enter</span> for a new line · AI can make mistakes</p>
+        </form>
+      </main>
+      <div id="modalRoot"></div>
+    </div>
+  </body>
+</html>
