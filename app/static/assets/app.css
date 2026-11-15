@@ -1289,6 +1289,11 @@ svg {
   color: #4e7768;
   background: #e9f1ed;
 }
+.test-data-note {
+  margin: 8px 0 0;
+  color: #8a5a31;
+  font-size: 8px;
+}
 
 /* Agent + booking */
 .timeline {

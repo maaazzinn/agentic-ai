@@ -30,6 +30,12 @@ def generate_recommendations(
             if latitude is not None and longitude is not None
             else None
         )
+        visit_charge = provider.get("base_visit_charge")
+        service_charge = provider.get("estimated_service_charge")
+        if visit_charge is not None and service_charge is not None:
+            provider["estimated_total"] = (
+                visit_charge + service_charge + round(service_charge * 0.18)
+            )
         if provider["distance_km"] is None or provider["distance_km"] <= 25:
             providers.append(provider)
 
@@ -53,10 +59,28 @@ def generate_recommendations(
     if not providers:
         notice = f"No {analysis.category.replace('_', ' ')} providers are listed in the SQLite database."
     elif analysis.intent == "book":
-        notice = (
-            "The SQLite records do not include prices or available time slots, "
-            "so a booking cannot be confirmed."
-        )
+        booking_data = [
+            provider
+            for provider in providers
+            if provider.get("base_visit_charge") is not None
+            and provider.get("estimated_service_charge") is not None
+            and provider.get("slots_available")
+        ]
+        if not booking_data:
+            notice = (
+                "The SQLite records do not include prices or available time slots, "
+                "so a booking cannot be confirmed."
+            )
+        elif any(provider.get("booking_data_source") == "synthetic_test" for provider in booking_data):
+            notice = (
+                "Synthetic test prices and appointment slots are available for the demo only. "
+                "They are not provider-confirmed, and no real booking has been placed."
+            )
+        else:
+            notice = (
+                "Prices and appointment slots are listed from provider records. "
+                "This request only provides options; no booking has been placed."
+            )
     else:
         notice = None
 

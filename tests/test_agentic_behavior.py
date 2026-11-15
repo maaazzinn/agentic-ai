@@ -145,6 +145,8 @@ class GeneralAnswerEndpointTests(unittest.TestCase):
             ["system", "user"],
         )
         self.assertIn("Answer service questions only from", client.payload["messages"][0]["content"])
+        self.assertIn("booking_data_source='synthetic_test'", client.payload["messages"][0]["content"])
+        self.assertIn("test-only", client.payload["messages"][0]["content"])
         self.assertNotIn("Ignore app scope", client.payload["messages"][0]["content"])
 
     def test_generate_api_uses_app_scope_instead_of_client_system_prompt(self):

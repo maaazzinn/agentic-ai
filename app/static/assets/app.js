@@ -265,7 +265,11 @@ function renderProviders(data) {
           const distance = text(provider, "distance_km", "distance");
           const area = text(provider, "area", "address");
           const verified = text(provider, "verification_status").toLowerCase() === "verified";
-          const slots = list(provider, "slots", "availableSlots", "available_time_slots").map(String);
+          const slots = list(provider, "slots", "slots_available", "availableSlots", "available_time_slots").map(String);
+          const hasPrice = provider.base_visit_charge != null && provider.estimated_service_charge != null;
+          const totalEstimate = Number(provider.estimated_total ?? (Number(provider.base_visit_charge) + Number(provider.estimated_service_charge)));
+          const hasEstimate = hasPrice && Number.isFinite(totalEstimate);
+          const syntheticBookingData = provider.booking_data_source === "synthetic_test";
           const initials = name.split(/\s+/).slice(0, 2).map((part) => part[0] || "").join("").toUpperCase();
           return `
             <article class="provider-card" data-provider="${index}">
@@ -282,7 +286,14 @@ function renderProviders(data) {
                 ${area ? `<span>${icon("mapPin", 14)}${escapeHtml(area)}</span>` : ""}
                 ${distance ? `<span>${icon("mapPin", 14)}${Number.isFinite(Number(distance)) ? `${Number(distance).toFixed(1)} km away` : escapeHtml(distance)}</span>` : ""}
               </div>
+              ${hasEstimate ? `
+                <div class="price-row">
+                  <div><small>Visit charge</small><strong>₹${Number(provider.base_visit_charge).toLocaleString("en-IN")}</strong></div>
+                  <div><small>Estimated total</small><strong>₹${totalEstimate.toLocaleString("en-IN")}</strong></div>
+                </div>
+              ` : ""}
               ${slots.length ? `<div class="slots">${slots.slice(0, 3).map((slot) => `<span>${escapeHtml(slot)}</span>`).join("")}</div>` : ""}
+              ${syntheticBookingData ? `<p class="test-data-note">Synthetic test prices and slots—not provider-confirmed.</p>` : ""}
             </article>
           `;
         }).join("")}

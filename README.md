@@ -11,7 +11,7 @@ A FastAPI application and web chat UI powered by a local Ollama model. Ask about
 - **Local web UI**: Served at `http://127.0.0.1:8000/`.
 - **Plain frontend**: The UI is built from `app/templates/index.html` and `app/static/assets/`; no frontend build step is needed.
 
-> **Booking limitation:** SQLite records contain provider directory details only, not prices or availability. The app lists matching providers but does not confirm bookings.
+> **Booking limitation:** The repository can seed synthetic prices and time slots for testing. They are explicitly labeled test-only and are not provider-confirmed; the app never places a real booking.
 
 ## Requirements
 
@@ -82,7 +82,7 @@ Ask only about services and providers present in the SQLite database. For exampl
 
 > Find a plumbing provider in Aluva.
 
-Service categories and provider details come from SQLite. If no provider row matches the requested category, the app says so instead of suggesting a built-in demo provider. Prices and available appointment slots are not in the database, so booking requests only return matching directory records.
+Service categories and provider details come from SQLite. If no provider row matches the requested category, the app says so instead of suggesting a built-in demo provider. Booking requests can display provider-supplied prices and availability or clearly labeled synthetic test values; the app does not confirm or submit real bookings.
 
 ## API
 
@@ -109,13 +109,23 @@ Before a provider CSV has been imported, service and provider lookups return no 
 
 ### Import provider CSV data
 
-The CSV must include `service_category`, `shop_name`, `contact_name`, `phone`, `address`, `area`, `latitude`, `longitude`, `source_url`, and `verification_status`. Import it with:
+The CSV must include `service_category`, `shop_name`, `contact_name`, `phone`, `address`, `area`, `latitude`, `longitude`, `source_url`, and `verification_status`. Optional booking columns are `base_visit_charge`, `estimated_service_charge`, `slots_available` (a JSON array or `|`-separated times), and `booking_data_source` (`provider_supplied` or `synthetic_test`). Import it with:
 
 ```cmd
 python -m scripts.import_providers --csv "C:\path\to\providers.csv"
 ```
 
 Imports are repeatable: records are upserted using the service category, shop name, and phone. Coordinates are optional but range-validated when present; provider names and areas are required. Pass `--database "C:\path\to\providers.sqlite3"` to override the configured/default SQLite file for one import.
+
+### Seed booking test data
+
+To test price and availability display, generate repeatable pseudo-random prices and appointment slots for provider records that do not already have provider-supplied booking details:
+
+```cmd
+python -m scripts.seed_test_booking_data
+```
+
+The generated rows are marked `booking_data_source=synthetic_test`; they are not real quotes or confirmed availability. Pass `--seed 123` for a different repeatable set or `--database "C:\path\to\providers.sqlite3"` to target another SQLite file. The script does not overwrite rows marked `provider_supplied`.
 
 ### Chat request example
 
